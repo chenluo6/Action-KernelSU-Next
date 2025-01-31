@@ -40,7 +40,9 @@ jobs:
           
       - name: Configure Git
         run: |
-         gcc -flto=thin -o output file
+         build:
+         options:
+         lto: thin
          git config --global user.name "chenluo6"
          git config --global user.email "tangjiahui07216@gmail.com"
 
