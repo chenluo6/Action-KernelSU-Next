@@ -40,9 +40,6 @@ jobs:
           
       - name: Configure Git
         run: |
-         build:
-         options:
-         lto: thin
          git config --global user.name "chenluo6"
          git config --global user.email "tangjiahui07216@gmail.com"
 
@@ -62,6 +59,7 @@ jobs:
          mkdir kernel_workspace && cd kernel_workspace
          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
          repo sync
+         
          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
          sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
@@ -111,6 +109,7 @@ jobs:
       - name: Build kernel
         run: |
          cd kernel_workspace
+         LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
          ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
          
       - name: Make AnyKernel3
