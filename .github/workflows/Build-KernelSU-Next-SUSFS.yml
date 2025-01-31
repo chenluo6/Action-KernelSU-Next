@@ -40,7 +40,8 @@ jobs:
           
       - name: Configure Git
         run: |
-         git config --global user.name "build"
+         gcc -flto=thin -o output file
+         git config --global user.name "chenluo6"
          git config --global user.email "tangjiahui07216@gmail.com"
 
       - name: Install dependencies
