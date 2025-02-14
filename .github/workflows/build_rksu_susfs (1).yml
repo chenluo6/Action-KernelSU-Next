@@ -1,0 +1,137 @@
+name: Build rKernelSU(rsuntk)
+on:
+  workflow_dispatch:
+    inputs:
+      CPU:
+        description: "分支"
+        required: true
+        default: 'sm8550'
+      FEIL:
+        description: "配置文件"
+        required: true
+        default: 'oneplus_ace3_v'
+      CPUD:
+        description: "处理器代号"
+        required: true
+        default: 'kalama'
+      ANDROID_VERSION:
+        description: "内核安卓版本"
+        required: true
+        default: 'android13'
+      KERNEL_VERSION:
+        description: "内核版本"
+        required: true
+        default: '5.15'
+      RKSU_ENABLED:
+        description: "添加 rKSU"
+        required: true
+        type: boolean
+        default: false
+      SUSFS_ENABLED:
+        description: "添加 SUSFS"
+        required: true
+        type: boolean
+        default: false
+      KERNEL_NAME:
+        description: "自定义内核后版本名"
+        required: false
+        default: ''
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 16384
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          
+      - name: Configure Git
+        run: |
+         git config --global user.name "build"
+         git config --global user.email "3436378798@qq.com"
+      - name: Install dependencies
+        run: |
+         sudo apt update && sudo apt upgrade -y
+         sudo apt install -y python3 git curl
+      - name: Install repo tool
+        run: |
+         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+         chmod a+x ~/repo
+         sudo mv ~/repo /usr/local/bin/repo
+      - name: Initialize repo and sync
+        run: |
+         mkdir kernel_workspace && cd kernel_workspace
+         repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
+         repo sync
+         rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+         rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+         sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
+         sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
+         if [ -n "${{ github.event.inputs.KERNEL_NAME }}" ]; then
+           sed -i '$s|echo "\$res"|echo "-${{ github.event.inputs.KERNEL_NAME }}"|' kernel_platform/common/scripts/setlocalversion
+         fi
+
+      - name: Set up mKernelSU
+        if: github.event.inputs.RKSU_ENABLED == 'true'
+        run: |
+         cd kernel_workspace/kernel_platform
+         curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/refs/heads/main/kernel/setup.sh" | bash -
+         cd KernelSU
+         git revert -m 1 $(git log --grep="remove devpts hook" --pretty=format:"%h") -n
+         KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+         sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+        
+      - name: Set up susfs
+        if: github.event.inputs.SUSFS_ENABLED == 'true'
+        run: |
+           cd kernel_workspace
+           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+           git clone https://github.com/TanakaLun/kernel_patches4mksu.git
+           cd kernel_platform
+           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+           cp ../kernel_patches4mksu/mksu_susfs.patch ./KernelSU/
+           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./common/
+           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+
+           # Apply patches
+           cd ./KernelSU
+           patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+           patch -p1 --forward < mksu_susfs.patch || true
+           cd ../common
+           patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch || true
+           cp ../../kernel_patches4mksu/69_hide_stuff.patch ./
+           patch -p1 -F 3 < 69_hide_stuff.patch
+           git add -A && git commit -a -m "BUILD Kernel"
+           cd ..
+           cd ./msm-kernel && git add -A && git commit -a -m "BUILD Kernel"
+           cd ..
+           
+      - name: Build kernel
+        run: |
+         cd kernel_workspace
+          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
+         
+      - name: Make AnyKernel3
+        run: |
+         git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
+         rm -rf ./AnyKernel3/.git
+         cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/gki_kernel/dist/Image ./AnyKernel3/
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+         name: AnyKernel3_KernelSU_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+         path: ./AnyKernel3/*
+         
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+         name: Image_KernelSU_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+         path: kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
