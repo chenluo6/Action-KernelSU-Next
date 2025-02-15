@@ -1,4 +1,4 @@
-name: Build rKernelSU(rsuntk)
+name: Build MKernelSU
 on:
   workflow_dispatch:
     inputs:
